@@ -8,4 +8,7 @@
 	<entry-point class='com.sblackwell.ld31.client.HtmlLauncher' />
 	
 	<set-configuration-property name="gdx.assetpath" value="../core/assets" />
+
+    <extend-configuration-property name="gdx.reflect.include" value="com.sblackwell.ld31.types" />
+
 </module>

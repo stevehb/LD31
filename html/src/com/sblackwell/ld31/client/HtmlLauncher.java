@@ -4,12 +4,14 @@ import com.badlogic.gdx.ApplicationListener;
 import com.badlogic.gdx.backends.gwt.GwtApplication;
 import com.badlogic.gdx.backends.gwt.GwtApplicationConfiguration;
 import com.sblackwell.ld31.LD31Game;
+import com.sblackwell.ld31.utils.L;
 
 public class HtmlLauncher extends GwtApplication {
 
         @Override
         public GwtApplicationConfiguration getConfig () {
-                return new GwtApplicationConfiguration(480, 320);
+            L.logWriter = new LogWriterGwtImpl();
+            return new GwtApplicationConfiguration(600, 600);
         }
 
         @Override
