@@ -13,12 +13,17 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.graphics.glutils.ImmediateModeRenderer20;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.Vector2;
+import com.badlogic.gdx.physics.box2d.Box2DDebugRenderer;
+import com.badlogic.gdx.physics.box2d.World;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.Pools;
 import com.badlogic.gdx.utils.TimeUtils;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
 import com.sblackwell.ld31.types.FontDrawable;
 import com.sblackwell.ld31.types.GameState;
+import com.sblackwell.ld31.types.InputSingleton;
+import com.sblackwell.ld31.utils.L;
 
 public class LD31Game extends ApplicationAdapter {
     private final int FONT_VIEWPORT_WIDTH = 900;
@@ -27,6 +32,9 @@ public class LD31Game extends ApplicationAdapter {
     private final int WORLD_HEIGHT = 100;
 
     private final String TITLE = "Snowman Ski Jump";
+    private final String INSTRUCTIONS_1 = "left & right to position";
+    private final String INSTRUCTIONS_2 = "down to drop";
+    private final String INSTRUCTIONS_3 = "any key to start";
 
     private static final String VERT_SHADER =
                     "attribute vec4 a_position;\n" +
@@ -52,7 +60,9 @@ public class LD31Game extends ApplicationAdapter {
     private SpriteBatch batch;
     private ScreenViewport fontViewport, worldViewport;
     private ShapeRenderer shapeRenderer;
+    private Box2DDebugRenderer physRenderer;
 
+    private World world;
     private GameState state;
     private Array<FontDrawable> fontDrawables;
 
@@ -74,7 +84,11 @@ public class LD31Game extends ApplicationAdapter {
         ShaderProgram shaderProgram = new ShaderProgram(VERT_SHADER, FRAG_SHADER);
         imr.setShader(shaderProgram);
 
+        physRenderer = new Box2DDebugRenderer(true, false, true, true, true, true);
+        world = new World(new Vector2(0f, -10f), true);
         fontDrawables = new Array<FontDrawable>(false, 32, FontDrawable.class);
+
+        Gdx.input.setInputProcessor(InputSingleton.get());
 
         // set up intro
         state = GameState.OUTRO_2_INTRO;
@@ -90,21 +104,29 @@ public class LD31Game extends ApplicationAdapter {
 
 	@Override
 	public void render () {
-		Gdx.gl.glClearColor(0.07f, 0.09f, 0.11f, 1f);
-		Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
 
 
+        // update world & state
+        world.step(1f/60f, 8, 6);
         switch(state) {
-        case INTRO:
+        case INTRO: {
+            if(InputSingleton.keysPressed > 0) {
+                L.l("move to next stage: " + InputSingleton.keysPressed);
+            }
             break;
-        case INTRO_2_PLAY:
+        }
+        case INTRO_2_PLAY: {
             break;
-        case PLAY_DROP_BOTTOM:
+        }
+        case PLAY_DROP_BOTTOM: {
             break;
-        case PLAY_DROP_TOP:
+        }
+        case PLAY_DROP_TOP: {
             break;
-        case PLAY_2_OUTRO:
+        }
+        case PLAY_2_OUTRO: {
             break;
+        }
         case OUTRO: {
             break;
         }
@@ -113,20 +135,38 @@ public class LD31Game extends ApplicationAdapter {
             Pools.freeAll(fontDrawables, true);
 
             // make title
-            FontDrawable title = Pools.obtain(FontDrawable.class);
-            title.text = TITLE;
-            title.bounds.set(font.getBounds(title.text));
-            title.pos.x = (FONT_VIEWPORT_WIDTH - title.bounds.width) / 2f;
-            title.pos.y = (FONT_VIEWPORT_HEIGHT - title.bounds.height) * (5f / 6f);
+            FontDrawable title = createFontDrawable(TITLE, 1f, Color.WHITE, 0.5f, 5f / 6f);
             fontDrawables.add(title);
 
             // make instructions text
-
+            FontDrawable inst1 = createFontDrawable(INSTRUCTIONS_1, 0.75f, Color.WHITE, 0.5f, 1f / 4f);
+            fontDrawables.add(inst1);
+            FontDrawable inst2 = createFontDrawable(INSTRUCTIONS_2, 0.75f, Color.WHITE, 0.5f, 1f / 4f);
+            inst2.pos.y -= inst1.bounds.height * 1.5f;
+            fontDrawables.add(inst2);
+            FontDrawable inst3 = createFontDrawable(INSTRUCTIONS_3, 0.75f, Color.WHITE, 0.5f, 1f / 4f);
+            inst3.pos.y -= inst1.bounds.height * 3f;
+            fontDrawables.add(inst3);
 
             state = GameState.INTRO;
             break;
         }
         }
+
+
+        // render it all
+        Gdx.gl.glClearColor(0.07f, 0.09f, 0.11f, 1f);
+		Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
+
+        worldViewport.getCamera().update();
+        shapeRenderer.setProjectionMatrix(worldViewport.getCamera().combined);
+        shapeRenderer.begin();
+        shapeRenderer.identity();
+        shapeRenderer.translate(50, 50, 0);
+        shapeRenderer.rotate(0, 0, 1, (TimeUtils.millis() / 10L) % 360);
+        shapeRenderer.set(ShapeRenderer.ShapeType.Filled);
+        shapeRenderer.triangle(-10f, -10f, 0f, 10f, 10f, -10f, Color.RED, Color.WHITE, Color.BLUE);
+        shapeRenderer.end();
 
         // render text
         fontViewport.getCamera().update();
@@ -140,16 +180,7 @@ public class LD31Game extends ApplicationAdapter {
         }
         batch.end();
 
-        worldViewport.getCamera().update();
-        shapeRenderer.setProjectionMatrix(worldViewport.getCamera().combined);
-        shapeRenderer.begin();
-        shapeRenderer.identity();
-        shapeRenderer.translate(50, 50, 0);
-        shapeRenderer.rotate(0, 0, 1, (TimeUtils.millis() / 10L) % 360);
-        shapeRenderer.set(ShapeRenderer.ShapeType.Filled);
-        shapeRenderer.triangle(-10f, -10f, 0f, 10f, 10f, -10f, Color.RED, Color.WHITE, Color.BLUE);
-        shapeRenderer.end();
-
+        physRenderer.render(world, worldViewport.getCamera().combined);
 
         //shapeRenderer.begin(ShapeRenderer.ShapeType.Line);
         //shapeRenderer.identity();
@@ -162,9 +193,22 @@ public class LD31Game extends ApplicationAdapter {
 
     @Override
     public void dispose() {
-        batch.dispose();
         shapeRenderer.dispose();
+        batch.dispose();
         font.dispose();
+        fontTexture.dispose();
     }
 
+    private FontDrawable createFontDrawable(String text, float scale, Color tint, float posX, float posY) {
+        FontDrawable fd = Pools.obtain(FontDrawable.class);
+        fd.text = text;
+        fd.scale = scale;
+        fd.bounds.set(font.getBounds(fd.text));
+        fd.bounds.width *= scale;
+        fd.bounds.height *= scale;
+        fd.tint.set(tint);
+        fd.pos.x = (FONT_VIEWPORT_WIDTH - fd.bounds.width) * posX;
+        fd.pos.y = (FONT_VIEWPORT_HEIGHT - fd.bounds.height) * posY;
+        return fd;
+    }
 }

@@ -11,7 +11,7 @@ public class HtmlLauncher extends GwtApplication {
         @Override
         public GwtApplicationConfiguration getConfig () {
             L.logWriter = new LogWriterGwtImpl();
-            return new GwtApplicationConfiguration(600, 600);
+            return new GwtApplicationConfiguration(700, 700);
         }
 
         @Override
