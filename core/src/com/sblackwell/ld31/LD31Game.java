@@ -3,6 +3,7 @@ package com.sblackwell.ld31;
 import com.badlogic.gdx.Application;
 import com.badlogic.gdx.ApplicationAdapter;
 import com.badlogic.gdx.Gdx;
+import com.badlogic.gdx.Input;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.OrthographicCamera;
@@ -13,6 +14,7 @@ import com.badlogic.gdx.graphics.g2d.TextureRegion;
 import com.badlogic.gdx.graphics.glutils.ImmediateModeRenderer20;
 import com.badlogic.gdx.graphics.glutils.ShaderProgram;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
+import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector2;
 import com.badlogic.gdx.physics.box2d.Body;
 import com.badlogic.gdx.physics.box2d.BodyDef;
@@ -27,12 +29,16 @@ import com.badlogic.gdx.physics.box2d.Shape;
 import com.badlogic.gdx.physics.box2d.World;
 import com.badlogic.gdx.utils.Array;
 import com.badlogic.gdx.utils.FloatArray;
+import com.badlogic.gdx.utils.ObjectMap;
 import com.badlogic.gdx.utils.Pools;
 import com.badlogic.gdx.utils.viewport.ScreenViewport;
-import com.sblackwell.ld31.types.BodyRenderData;
+import com.sblackwell.ld31.listeners.ContactSingleton;
+import com.sblackwell.ld31.listeners.InputSingleton;
+import com.sblackwell.ld31.types.BodyData;
+import com.sblackwell.ld31.types.ContactEvent;
+import com.sblackwell.ld31.types.EntityType;
 import com.sblackwell.ld31.types.FontDrawable;
 import com.sblackwell.ld31.types.GameState;
-import com.sblackwell.ld31.types.InputSingleton;
 import com.sblackwell.ld31.utils.A;
 import com.sblackwell.ld31.utils.L;
 
@@ -43,8 +49,15 @@ public class LD31Game extends ApplicationAdapter {
     private final int WORLD_HEIGHT = 100;
     private final int CIRCLE_SEG_COUNT = 40;
 
-    private final int DROPPER_MIN_X = 0;
+    private final int DROPPER_MIN_X = 2;
     private final int DROPPER_MAX_X = 25;
+    private final float DROPPER_DELTA_X = 0.5f;
+
+    private final int PLATFORM_MIN_X = 55;
+    private final int PLATFORM_MAX_X = 90;
+
+    private final float TOP_RADIUS = 2.5f;
+    private final float BOTTOM_RADIUS = 5.0f;
 
     private final String TITLE = "Snowman Ski Jump";
     private final String INSTRUCTIONS_1 = "left & right to position";
@@ -70,6 +83,31 @@ public class LD31Game extends ApplicationAdapter {
                     "   gl_FragColor = v_col;\n" +
                     "}";
 
+    private class ScoreKeep {
+        public float placementOnPlatform;
+        public boolean topConnectedToBottom;
+        public float angleOfConnection;
+        public boolean hasStickHands;
+        public boolean hasCharcoalEyes;
+        public boolean hasCarrotNose;
+        public boolean hasTopHat;
+        public float total;
+
+        @Override
+        public String toString() {
+            return "ScoreKeep{" +
+                    "\n  placementOnPlatform=" + placementOnPlatform +
+                    "\n  topConnectedToBottom=" + topConnectedToBottom +
+                    "\n  angleOfConnection=" + angleOfConnection +
+                    "\n  hasStickHands=" + hasStickHands +
+                    "\n  hasCharcoalEyes=" + hasCharcoalEyes +
+                    "\n  hasCarrotNose=" + hasCarrotNose +
+                    "\n  hasTopHat=" + hasTopHat +
+                    "\n  total=" + total +
+                    "\n}";
+        }
+    }
+
     private Texture fontTexture;
     private BitmapFont font;
     private SpriteBatch batch;
@@ -77,14 +115,20 @@ public class LD31Game extends ApplicationAdapter {
     private ShapeRenderer shapeRenderer;
     private Box2DDebugRenderer physRenderer;
 
+    private FloatArray vertices;
+
     private World world;
     private Array<Body> worldBodies;
     private GameState state;
+    private ObjectMap<EntityType, Body> namedBodies;
     private Array<FontDrawable> fontDrawables;
+
+    private ScoreKeep scoreKeep;
 
     @Override
 	public void create () {
         Gdx.app.setLogLevel(Application.LOG_DEBUG);
+        MathUtils.sin(1f);
 
         fontTexture = new Texture(Gdx.files.internal("fonts/trench_64.png"));
         fontTexture.setFilter(Texture.TextureFilter.Linear, Texture.TextureFilter.Linear);
@@ -99,10 +143,15 @@ public class LD31Game extends ApplicationAdapter {
         ShaderProgram shaderProgram = new ShaderProgram(VERT_SHADER, FRAG_SHADER);
         imr.setShader(shaderProgram);
 
+        vertices = new FloatArray();
         physRenderer = new Box2DDebugRenderer(true, false, true, true, true, true);
-        world = new World(new Vector2(0f, -10f), true);
+        world = new World(new Vector2(0f, -100f), true);
+        world.setContactListener(ContactSingleton.get());
         worldBodies = new Array<Body>();
+        namedBodies = new ObjectMap<EntityType, Body>();
         fontDrawables = new Array<FontDrawable>(false, 32, FontDrawable.class);
+
+        scoreKeep = new ScoreKeep();
 
         Gdx.input.setInputProcessor(InputSingleton.get());
 
@@ -120,59 +169,300 @@ public class LD31Game extends ApplicationAdapter {
 
 	@Override
 	public void render () {
-        // update world & state
+        if(Gdx.input.isKeyJustPressed(Input.Keys.R)) {
+            state = GameState.INTRO_2_PLAY;
+        }
+
         world.step(1f/60f, 8, 6);
+
+        // handle dropper movement
+        {
+            Body dropper = namedBodies.get(EntityType.DROPPER);
+            if(dropper != null) {
+                Vector2 dropperPos = dropper.getPosition();
+                if(Gdx.input.isKeyPressed(Input.Keys.LEFT)) {
+                    dropperPos.x -= DROPPER_DELTA_X;
+                } else if(Gdx.input.isKeyPressed(Input.Keys.RIGHT)) {
+                    dropperPos.x += DROPPER_DELTA_X;
+                }
+                dropperPos.x = MathUtils.clamp(dropperPos.x, DROPPER_MIN_X, DROPPER_MAX_X);
+                dropper.setTransform(dropperPos, dropper.getAngle());
+            }
+        }
+
+
+        // update world & state
         switch(state) {
         case INTRO: {
+            // TODO: return this to the conditional
+            state = GameState.INTRO_2_PLAY;
+
             if(InputSingleton.keysPressed > 0) { state = GameState.INTRO_2_PLAY; }
             break;
         }
+
         case INTRO_2_PLAY: {
             L.l("state=" + state);
-            clearFontDrawables(fontDrawables);
+            clearPoolArray(fontDrawables);
             world.getBodies(worldBodies);
             clearWorld(world, worldBodies);
 
+            scoreKeep.placementOnPlatform = 0f;
+            scoreKeep.topConnectedToBottom = false;
+            scoreKeep.angleOfConnection = 0f;
+            scoreKeep.hasStickHands = false;
+            scoreKeep.hasCharcoalEyes = false;
+            scoreKeep.hasCarrotNose = false;
+            scoreKeep.hasTopHat = false;
+            scoreKeep.total = 0f;
+
+
             // create ski slope
-            FloatArray verts = Pools.obtain(FloatArray.class);
-            verts.clear();
-            verts.addAll(
-                    0f, 75f,
-                    10f, 40f,
-                    20f, 25f,
-                    30f, 15f,
-                    35f, 12.5f,
-                    40f, 15f,
-                    45f, 20f);
-            verts.shrink();
-            BodyDef slopeBodyDef = createBodyDef(BodyDef.BodyType.StaticBody, 0f, 0f, 0f, 0f);
-            FixtureDef slopeFixtureDef = createFixtureDef(Shape.Type.Chain, verts, 0f, 0f, 0f);
-            Body slopeBody = createBody(world, slopeBodyDef, slopeFixtureDef);
-            BodyRenderData slopeData = Pools.obtain(BodyRenderData.class);
-            slopeData.outline.set(Color.RED);
-            slopeBody.setUserData(slopeData);
+            {
+                vertices.clear();
+                final float xCenter = 25f;
+                for(float x = 0f; x <= 37f; x += 1f) {
+                    float y = 0.085f *((x - xCenter) * (x - xCenter)) + 5f;
+                    vertices.add(x);
+                    vertices.add(y);
+                }
+                vertices.shrink();
+                BodyDef bd = createBodyDef(BodyDef.BodyType.StaticBody, 0f, 0f, 0f, 0f);
+                FixtureDef fd = createFixtureDef(Shape.Type.Chain, vertices, 0f, 0f, 0f);
+                Body b = createBody(world, bd, fd);
+                BodyData data = Pools.obtain(BodyData.class);
+                data.outlineColor.set(Color.RED);
+                data.type = EntityType.SLOPE;
+                b.setUserData(data);
+                namedBodies.put(EntityType.SLOPE, b);
+            }
 
-            // create arrow
-            verts.clear();
+            // create platform
+            {
+                vertices.clear();
+                vertices.addAll(PLATFORM_MIN_X - 5f, 0f, PLATFORM_MIN_X, 10f, PLATFORM_MAX_X, 10f, PLATFORM_MAX_X + 5f, 0f);
+                vertices.shrink();
+                BodyDef bd = createBodyDef(BodyDef.BodyType.StaticBody, 0f, 0f, 0f, 0f);
+                FixtureDef fd = createFixtureDef(Shape.Type.Chain, vertices, 0f, 0f, 0f);
+                Body b = createBody(world, bd, fd);
+                BodyData data = Pools.obtain(BodyData.class);
+                data.outlineColor.set(Color.RED);
+                data.type = EntityType.PLATFORM;
+                b.setUserData(data);
+                namedBodies.put(EntityType.PLATFORM, b);
+            }
 
+            // create dropper
+            {
+                vertices.clear();
+                vertices.addAll(0f, 0f, 0f, -5f);
+                vertices.shrink();
+                FixtureDef fd2 = createFixtureDef(Shape.Type.Chain, vertices, 0f, 0f, 0f);
 
-            Pools.free(verts);
+                vertices.clear();
+                vertices.addAll(-3f, -7f, 0f, -5f, 3f, -7f);
+                vertices.shrink();
+                FixtureDef fd1 = createFixtureDef(Shape.Type.Chain, vertices, 0f, 0f, 0f);
 
-            state = GameState.PLAY;
+                BodyDef bd = createBodyDef(BodyDef.BodyType.KinematicBody, (DROPPER_MAX_X - DROPPER_MIN_X) / 2f, WORLD_HEIGHT, 10f, 0f);
+                Body b = createBody(world, bd, fd1);
+                b.createFixture(fd2);
+                fd2.shape.dispose();
+                BodyData data = Pools.obtain(BodyData.class);
+                data.outlineColor.set(Color.OLIVE);
+                data.type = EntityType.DROPPER;
+                b.setUserData(data);
+                namedBodies.put(EntityType.DROPPER, b);
+            }
+
+            // create bottom snowball
+            {
+                Body dropper = namedBodies.get(EntityType.DROPPER);
+                vertices.clear();
+                vertices.add(BOTTOM_RADIUS);
+                vertices.shrink();
+                BodyDef bd = createBodyDef(BodyDef.BodyType.DynamicBody, dropper.getPosition().x, WORLD_HEIGHT - 10f - BOTTOM_RADIUS, 0.13f, 0f);
+                bd.gravityScale = 0f;
+                FixtureDef fd = createFixtureDef(Shape.Type.Circle, vertices, 1f, 0f, 0f);
+                Body b = createBody(world, bd, fd);
+                BodyData data = Pools.obtain(BodyData.class);
+                data.fillColor.set(0.8f, 0.8f, 0.8f, 1f);
+                data.outlineColor.set(1f, 1f, 1f, 1f);
+                data.type = EntityType.BOTTOM_BALL;
+                b.setUserData(data);
+                namedBodies.put(EntityType.BOTTOM_BALL, b);
+            }
+
+            // create top snowball
+            {
+                vertices.clear();
+                vertices.add(TOP_RADIUS);
+                vertices.shrink();
+                BodyDef bd = createBodyDef(BodyDef.BodyType.DynamicBody, 0f, -2f * TOP_RADIUS, 0f, 0f);
+                bd.gravityScale = 0f;
+                FixtureDef fd = createFixtureDef(Shape.Type.Circle, vertices, 1f, 0f, 0f);
+                Body b = createBody(world, bd, fd);
+                BodyData data = Pools.obtain(BodyData.class);
+                data.fillColor.set(0.8f, 0.8f, 0.8f, 1f);
+                data.outlineColor.set(1f, 1f, 1f, 1f);
+                data.type = EntityType.TOP_BALL;
+                b.setUserData(data);
+                namedBodies.put(EntityType.TOP_BALL, b);
+            }
+
+            state = GameState.PLAY_BOTTOM_HELD;
             break;
         }
-        case PLAY: {
+
+        case PLAY_BOTTOM_HELD: {
+            Body dropper = namedBodies.get(EntityType.DROPPER);
+            A.NN(dropper, "dropper != null");
+            Vector2 dropperPos = dropper.getPosition();
+            Body ball = namedBodies.get(EntityType.BOTTOM_BALL);
+            A.NN(ball, "ball != null");
+
+            // move ball with dropper
+            Vector2 ballPos = ball.getPosition();
+            ball.setTransform(dropperPos.x, ballPos.y, ball.getAngle());
+
+            // release ball if down pressed
+            if(Gdx.input.isKeyJustPressed(Input.Keys.DOWN)) {
+                L.l("releasing the ball");
+                ball.setGravityScale(1f);
+                ball.setAwake(true);
+                clearPoolArray(ContactSingleton.get().queue);
+                state = GameState.PLAY_BOTTOM_DROPPED;
+            }
             break;
         }
+
+        case PLAY_BOTTOM_DROPPED: {
+            // process contact events
+            Array<ContactEvent> q = ContactSingleton.get().queue;
+            for(int i = 0; i < q.size; i++) {
+                ContactEvent e = q.get(i);
+                Body platform = getBodyOfType(e, EntityType.PLATFORM);
+                if(platform != null) {
+                    Body ball = getBodyOfType(e, EntityType.BOTTOM_BALL);
+                    float ballX = ball.getPosition().x;
+                    L.l("ball landed at " + ballX);
+                    ballX = MathUtils.round(ballX);
+                    if(ballX >= PLATFORM_MIN_X && ballX <= PLATFORM_MAX_X) {
+                        ball.setLinearVelocity(0f, 0f);
+                        ball.setGravityScale(0f);
+                        ball.setType(BodyDef.BodyType.StaticBody);
+                        scoreKeep.placementOnPlatform = calcPercentFromCenter(ballX, PLATFORM_MIN_X, PLATFORM_MAX_X);
+                       L.l("placementOnPlatform=" + scoreKeep.placementOnPlatform);
+                    } else {
+                        scoreKeep.placementOnPlatform = 0f;
+                    }
+                    state = GameState.PLAY_BOTTOM_2_TOP;
+                    break;
+                }
+            }
+            clearPoolArray(q);
+            break;
+        }
+
+        case PLAY_BOTTOM_2_TOP: {
+            L.l("state=" + state);
+            Body dropper = namedBodies.get(EntityType.DROPPER);
+            A.NN(dropper, "dropper != null");
+            Body ball = namedBodies.get(EntityType.TOP_BALL);
+            A.NN(ball, "ball != null");
+            ball.setTransform(dropper.getPosition().x, WORLD_HEIGHT - 10f - TOP_RADIUS, ball.getAngle());
+            state = GameState.PLAY_TOP_HELD;
+            break;
+        }
+
+        case PLAY_TOP_HELD: {
+            Body dropper = namedBodies.get(EntityType.DROPPER);
+            A.NN(dropper, "dropper != null");
+            Vector2 dropperPos = dropper.getPosition();
+            Body ball = namedBodies.get(EntityType.TOP_BALL);
+            A.NN(ball, "ball != null");
+
+            // move ball with dropper
+            Vector2 ballPos = ball.getPosition();
+            ball.setTransform(dropperPos.x, ballPos.y, ball.getAngle());
+
+            // release ball if down pressed
+            if(Gdx.input.isKeyJustPressed(Input.Keys.DOWN)) {
+                L.l("releasing the ball");
+                ball.setGravityScale(1f);
+                ball.setAwake(true);
+                clearPoolArray(ContactSingleton.get().queue);
+                state = GameState.PLAY_TOP_DROPPED;
+            }
+            break;
+        }
+
+        case PLAY_TOP_DROPPED: {
+            // process contact events
+            Array<ContactEvent> q = ContactSingleton.get().queue;
+            for(int i = 0; i < q.size; i++) {
+                ContactEvent e = q.get(i);
+                Body btmBall = getBodyOfType(e, EntityType.BOTTOM_BALL);
+                Body platform = getBodyOfType(e, EntityType.PLATFORM);
+
+                if(btmBall != null || platform != null) {
+                    Body topBall = getBodyOfType(e, EntityType.TOP_BALL);
+                    A.NN(topBall, "topBall != null");
+                    if(btmBall != null) {
+                        topBall.setLinearVelocity(0f, 0f);
+                        topBall.setGravityScale(0f);
+                        topBall.setType(BodyDef.BodyType.StaticBody);
+                        scoreKeep.topConnectedToBottom = true;
+                        float dX = Math.abs(btmBall.getPosition().x - topBall.getPosition().x);
+                        float dY = Math.abs(btmBall.getPosition().y - topBall.getPosition().y);
+                        float angle = MathUtils.atan2(dY, dX);
+                        scoreKeep.angleOfConnection = angle;
+                        L.l("top hit btm: angle=" + angle * MathUtils.radiansToDegrees);
+                    } else {
+                        float ballX = topBall.getPosition().x;
+                        L.l("topBall landed at " + ballX);
+                        ballX = MathUtils.round(ballX);
+                        if(ballX >= PLATFORM_MIN_X && ballX <= PLATFORM_MAX_X) {
+                            topBall.setLinearVelocity(0f, 0f);
+                            topBall.setGravityScale(0f);
+                            topBall.setType(BodyDef.BodyType.StaticBody);
+                            scoreKeep.topConnectedToBottom = false;
+                            scoreKeep.angleOfConnection = Float.NaN;
+                        }
+                    }
+                    state = GameState.PLAY_2_OUTRO;
+                    break;
+                }
+            }
+            clearPoolArray(q);
+            break;
+        }
+
         case PLAY_2_OUTRO: {
+            L.l("state=" + state);
+            scoreKeep.total = 0f;
+            scoreKeep.total += 100f * scoreKeep.placementOnPlatform;
+            scoreKeep.total += 150f * calcPercentFromCenter(scoreKeep.angleOfConnection, 0, MathUtils.PI);
+            scoreKeep.total += 250f * ((scoreKeep.topConnectedToBottom) ? 1f : 0f);
+            scoreKeep.total += 100f * ((scoreKeep.hasStickHands) ? 1f : 0f);
+            scoreKeep.total += 100f * ((scoreKeep.hasCharcoalEyes) ? 1f : 0f);
+            scoreKeep.total += 100f * ((scoreKeep.hasCarrotNose) ? 1f : 0f);
+            scoreKeep.total += 200f * ((scoreKeep.hasTopHat) ? 1f : 0f);
+
+            L.l("total score: " + scoreKeep);
+            state = GameState.OUTRO;
             break;
         }
+
         case OUTRO: {
+
+            // TODO: await key press to restart (go to INTRO_2_PLAY, not OUTRO_2_INTRO)
             break;
         }
+
         case OUTRO_2_INTRO: {
             L.l("state=" + state);
-            clearFontDrawables(fontDrawables);
+            clearPoolArray(fontDrawables);
             world.getBodies(worldBodies);
             clearWorld(world, worldBodies);
 
@@ -191,16 +481,14 @@ public class LD31Game extends ApplicationAdapter {
             fontDrawables.add(inst3);
 
             // test circle
-            FloatArray vert = Pools.obtain(FloatArray.class);
-            vert.clear();
-            vert.add(20f);
+            vertices.clear();
+            vertices.add(20f);
             BodyDef circleBodyDef = createBodyDef(BodyDef.BodyType.StaticBody, 50f, 50f, 0, 0);
-            FixtureDef circleFixtureDef = createFixtureDef(Shape.Type.Circle, vert, 0f, 0f, 0f);
+            FixtureDef circleFixtureDef = createFixtureDef(Shape.Type.Circle, vertices, 0f, 0f, 0f);
             Body circle = createBody(world, circleBodyDef, circleFixtureDef);
-            BodyRenderData circleData = Pools.obtain(BodyRenderData.class);
-            circleData.outline.set(Color.RED);
+            BodyData circleData = Pools.obtain(BodyData.class);
+            circleData.outlineColor.set(Color.RED);
             circle.setUserData(circleData);
-            Pools.free(vert);
 
             state = GameState.INTRO;
             break;
@@ -217,8 +505,8 @@ public class LD31Game extends ApplicationAdapter {
         Gdx.gl.glBlendFunc(GL20.GL_SRC_ALPHA, GL20.GL_ONE_MINUS_SRC_ALPHA);
         worldViewport.getCamera().update();
         shapeRenderer.setProjectionMatrix(worldViewport.getCamera().combined);
-        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
         world.getBodies(worldBodies);
+        shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
         for(int i = 0; i < worldBodies.size; i++) {
             Body b = worldBodies.get(i);
             if(b.isActive()) { drawBody(shapeRenderer, b); }
@@ -231,15 +519,6 @@ public class LD31Game extends ApplicationAdapter {
         }
         shapeRenderer.end();
         Gdx.gl.glDisable(GL20.GL_BLEND);
-
-        /*
-        shapeRenderer.identity();
-        shapeRenderer.translate(50, 50, 0);
-        shapeRenderer.rotate(0, 0, 1, (TimeUtils.millis() / 10L) % 360);
-        shapeRenderer.set(ShapeRenderer.ShapeType.Filled);
-        shapeRenderer.triangle(-10f, -10f, 0f, 10f, 10f, -10f, Color.RED, Color.WHITE, Color.BLUE);
-        shapeRenderer.end();
-        */
 
         // render text
         fontViewport.getCamera().update();
@@ -263,7 +542,7 @@ public class LD31Game extends ApplicationAdapter {
         fontTexture.dispose();
     }
 
-    private void clearFontDrawables(Array<FontDrawable> array) {
+    private void clearPoolArray(Array array) {
         Pools.freeAll(array, true);
         array.clear();
     }
@@ -273,6 +552,9 @@ public class LD31Game extends ApplicationAdapter {
             Body b = worldBodies.get(i);
             Pools.free(b.getUserData());
             world.destroyBody(b);
+            if(namedBodies.containsValue(b, true)) {
+                namedBodies.remove(namedBodies.findKey(b, true));
+            }
         }
         worldBodies.clear();
     }
@@ -360,9 +642,16 @@ public class LD31Game extends ApplicationAdapter {
     private void drawBody(ShapeRenderer renderer, Body body) {
         Array<Fixture> fixtures = body.getFixtureList();
         Vector2 bodyPos = body.getPosition();
-        BodyRenderData bodyData = (BodyRenderData) body.getUserData();
-        Color clr = renderer.getCurrentType() == ShapeRenderer.ShapeType.Line ? bodyData.outline : bodyData.fill;
-        renderer.setColor(clr);
+        BodyData bodyData = (BodyData) body.getUserData();
+        switch(renderer.getCurrentType()) {
+        case Point:
+        case Line:
+            renderer.setColor(bodyData.outlineColor);
+            break;
+        case Filled:
+            renderer.setColor(bodyData.fillColor);
+            break;
+        }
         for(int i = 0; i < fixtures.size; i++) {
             Fixture f = fixtures.get(i);
             switch(f.getType()) {
@@ -420,5 +709,20 @@ public class LD31Game extends ApplicationAdapter {
             }
             }
         }
+    }
+
+    private Body getBodyOfType(ContactEvent event, EntityType type) {
+        BodyData a = (BodyData) event.a.getUserData();
+        if(a.type == type) { return event.a; }
+        BodyData b = (BodyData) event.b.getUserData();
+        if(b.type == type) { return event.b; }
+        return null;
+    }
+
+    private float calcPercentFromCenter(float val, float min, float max) {
+        float width_2 = (max - min) / 2f;
+        float centerX = min + width_2;
+        float distFromCenter = Math.abs(val - centerX);
+        return (1f - (distFromCenter / width_2));
     }
 }

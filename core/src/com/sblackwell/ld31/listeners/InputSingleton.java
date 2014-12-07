@@ -1,13 +1,11 @@
-package com.sblackwell.ld31.types;
+package com.sblackwell.ld31.listeners;
 
 import com.badlogic.gdx.InputAdapter;
 
 public class InputSingleton extends InputAdapter {
     private static InputSingleton instance;
     public static InputSingleton get() {
-        if(instance == null) {
-            instance = new InputSingleton();
-        }
+        if(instance == null) { instance = new InputSingleton(); }
         return instance;
     }
     private InputSingleton() {
