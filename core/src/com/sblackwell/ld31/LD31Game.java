@@ -65,9 +65,13 @@ public class LD31Game extends ApplicationAdapter {
     private final int FALLING_ITEM_COUNT = 10;
 
     private final String TITLE = "Snowman Ski Jump";
+    private final String INSTRUCTIONS_0 = "Build a snowman!";
     private final String INSTRUCTIONS_1 = "left & right to position";
     private final String INSTRUCTIONS_2 = "down to drop";
     private final String INSTRUCTIONS_3 = "any key to start";
+
+    private final Color BACKGROUND = Color.valueOf("073642FF");
+
 
     private static final String VERT_SHADER =
                     "attribute vec4 a_position;\n" +
@@ -420,6 +424,14 @@ public class LD31Game extends ApplicationAdapter {
                         } else {
                             scoreKeep.placementOnPlatform = 0f;
                         }
+
+                        // add display hands
+                        if(scoreKeep.hasStickHands) {
+                            Body hands = createItem(world, EntityType.DISPLAY_HANDS);
+                            hands.setType(BodyDef.BodyType.StaticBody);
+                            hands.setTransform(ball.getPosition(), hands.getAngle());
+                        }
+
                         state = GameState.PLAY_BOTTOM_2_TOP;
                         break;
                     }
@@ -527,6 +539,26 @@ public class LD31Game extends ApplicationAdapter {
                                 scoreKeep.angleOfConnection = Float.NaN;
                             }
                         }
+
+
+                        // add display items
+                        if(scoreKeep.hasCharcoalEyes) {
+                            Body eyes = createItem(world, EntityType.DISPLAY_EYES);
+                            eyes.setType(BodyDef.BodyType.StaticBody);
+                            eyes.setTransform(topBall.getPosition(), eyes.getAngle());
+                        }
+                        if(scoreKeep.hasCarrotNose) {
+                            Body nose = createItem(world, EntityType.DISPLAY_NOSE);
+                            nose.setType(BodyDef.BodyType.StaticBody);
+                            nose.setTransform(topBall.getPosition(), nose.getAngle());
+                        }
+                        if(scoreKeep.hasTopHat) {
+                            Body hat = createItem(world, EntityType.DISPLAY_HAT);
+                            hat.setType(BodyDef.BodyType.StaticBody);
+                            hat.setTransform(topBall.getPosition(), hat.getAngle());
+                        }
+
+
                         state = GameState.PLAY_2_OUTRO;
                         break;
                     }
@@ -605,6 +637,47 @@ public class LD31Game extends ApplicationAdapter {
             FontDrawable title = createFontDrawable(font, TITLE, 1f, Color.RED, 0.5f, 5f / 6f);
             fontDrawables.add(title);
 
+            // display top
+            {
+                vertices1.clear();
+                vertices1.add(TOP_RADIUS);
+                BodyDef circleBodyDef = createBodyDef(BodyDef.BodyType.StaticBody, 50f, 50f + BOTTOM_RADIUS+TOP_RADIUS, 0, 0);
+                FixtureDef circleFixtureDef = createFixtureDef(Shape.Type.Circle, vertices1, 0f, 0f, 0f, (short) 0);
+                Body top = createBody(world, circleBodyDef, circleFixtureDef);
+                BodyData data = Pools.obtain(BodyData.class);
+                data.fillColor.set(Color.WHITE);
+                data.outlineColor.set(Color.WHITE);
+                top.setUserData(data);
+                Body eyes = createItem(world, EntityType.DISPLAY_EYES);
+                eyes.setType(BodyDef.BodyType.StaticBody);
+                eyes.setTransform(top.getPosition(), eyes.getAngle());
+                Body nose = createItem(world, EntityType.DISPLAY_NOSE);
+                nose.setType(BodyDef.BodyType.StaticBody);
+                nose.setTransform(top.getPosition(), nose.getAngle());
+                Body hat = createItem(world, EntityType.DISPLAY_HAT);
+                hat.setType(BodyDef.BodyType.StaticBody);
+                hat.setTransform(top.getPosition(), hat.getAngle());
+            }
+            // display bottom
+            {
+                vertices1.clear();
+                vertices1.add(BOTTOM_RADIUS);
+                BodyDef bd = createBodyDef(BodyDef.BodyType.StaticBody, 50f, 50f, 0, 0);
+                FixtureDef fd = createFixtureDef(Shape.Type.Circle, vertices1, 0f, 0f, 0f, (short) 0);
+                Body bottom = createBody(world, bd, fd);
+                BodyData circleData = Pools.obtain(BodyData.class);
+                circleData.fillColor.set(Color.WHITE);
+                circleData.outlineColor.set(Color.WHITE);
+                bottom.setUserData(circleData);
+                Body hands = createItem(world, EntityType.DISPLAY_HANDS);
+                hands.setType(BodyDef.BodyType.StaticBody);
+                hands.setTransform(bottom.getPosition(), bottom.getAngle());
+            }
+
+            // tag line
+            FontDrawable inst0 = createFontDrawable(font, INSTRUCTIONS_0, 0.75f, Color.RED, 0.5f, 0.45f);
+            fontDrawables.add(inst0);
+
             // make instructions text
             FontDrawable inst1 = createFontDrawable(font, INSTRUCTIONS_1, 0.75f, Color.RED, 0.5f, 1f / 4f);
             fontDrawables.add(inst1);
@@ -614,16 +687,6 @@ public class LD31Game extends ApplicationAdapter {
             FontDrawable inst3 = createFontDrawable(font, INSTRUCTIONS_3, 0.75f, Color.RED, 0.5f, 1f / 4f);
             inst3.pos.y -= inst1.bounds.height * 3f;
             fontDrawables.add(inst3);
-
-            // test circle
-            vertices1.clear();
-            vertices1.add(20f);
-            BodyDef circleBodyDef = createBodyDef(BodyDef.BodyType.StaticBody, 50f, 50f, 0, 0);
-            FixtureDef circleFixtureDef = createFixtureDef(Shape.Type.Circle, vertices1, 0f, 0f, 0f, (short)0);
-            Body circle = createBody(world, circleBodyDef, circleFixtureDef);
-            BodyData circleData = Pools.obtain(BodyData.class);
-            circleData.outlineColor.set(Color.RED);
-            circle.setUserData(circleData);
 
             state = GameState.INTRO;
             break;
@@ -806,21 +869,47 @@ public class LD31Game extends ApplicationAdapter {
             break;
         }
         case CARROT_NOSE: {
-            shapeType = Shape.Type.Polygon;
-            vertices1.addAll(-2.5f, -2.5f, 2.5f, 1f, 1f, 2.5f, -2.5f, -2.5f);
-            data.fillColor.set(Color.ORANGE);
+            shapeType = Shape.Type.Chain;
+            vertices1.addAll(-1.5f, -1.5f, 1.5f, 0.5f, 0.5f, 1.5f, -1.5f, -1.5f);
+            //data.fillColor.set(Color.ORANGE);
             data.outlineColor.set(Color.ORANGE);
             break;
         }
         case TOP_HAT: {
             shapeType = Shape.Type.Chain;
-            vertices1.addAll(-2.5f, -2.5f, 0f, 0f, 0f, 2.5f, 0f, 0f, 2.5f, 2.5f, 0f, 0f, 2.5f, 0f);
+            vertices1.addAll(-2f, -1f, 2f, -1f);
+            vertices2.addAll(-1f, -1f, -1f, 1.5f, 1f, 1.5f, 1f, -1f);
             //data.fillColor.set();
-            data.outlineColor.set(Color.MAGENTA);
+            data.outlineColor.set(Color.OLIVE);
             break;
         }
         case DISPLAY_HANDS: {
-
+            shapeType = Shape.Type.Chain;
+            float rad = BOTTOM_RADIUS;
+            vertices1.addAll(-rad, 0, -rad-2f, 2f, -rad-2f, 4f, -rad-2f, 2f, -rad-4f, 4f, -rad-2f, 2f, -rad-4f, 2f);
+            vertices2.addAll(rad, 0, rad+2f, 2f, rad+2f, 4f, rad+2f, 2f, rad+4f, 4f, rad+2f, 2f, rad+4f, 2f);
+            data.outlineColor.set(Color.ORANGE);
+            break;
+        }
+        case DISPLAY_EYES: {
+            shapeType = Shape.Type.Chain;
+            vertices1.addAll(0f, 0.75f, -0.5f,  1.5f, -1f, 0.75f, -0.5f, 0f, 0f, 0.75f);
+            vertices2.addAll(0f, 0.75f,  0.5f, 0f, 1f, 0.75f, 0.5f, 1.5f, 0f, 0.75f);
+            data.outlineColor.set(Color.BLACK);
+            break;
+        }
+        case DISPLAY_NOSE: {
+            shapeType = Shape.Type.Chain;
+            vertices1.addAll(0f, 0f, -1.5f, -0.75f, 0f, -1.5f, 0f, 0f);
+            data.outlineColor.set(Color.ORANGE);
+            break;
+        }
+        case DISPLAY_HAT: {
+            shapeType = Shape.Type.Chain;
+            float rad = TOP_RADIUS;
+            vertices1.addAll(-2f, rad, 2f, rad);
+            vertices2.addAll(-1f, rad, -1f, rad+2.5f, 1f, rad+2.5f, 1f, rad);
+            data.outlineColor.set(Color.ORANGE);
             break;
         }
         default:
@@ -839,7 +928,7 @@ public class LD31Game extends ApplicationAdapter {
         fd1.isSensor = true;
         Body b = createBody(world, bd, fd1);
         if(vertices2.size > 0) {
-            FixtureDef fd2 = createFixtureDef(shapeType, vertices1, 0f, 0f, 0f, type.groupIdx);
+            FixtureDef fd2 = createFixtureDef(shapeType, vertices2, 0f, 0f, 0f, type.groupIdx);
             fd2.isSensor = true;
             b.createFixture(fd2);
             fd2.shape.dispose();

@@ -5,6 +5,6 @@ public class L {
     public static final String TAG = "LD31";
 
     public static void l(String msg) {
-        logWriter.write(TAG, msg);
+        //logWriter.write(TAG, msg);
     }
 }

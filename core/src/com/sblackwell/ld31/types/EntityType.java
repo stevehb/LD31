@@ -10,7 +10,10 @@ public enum EntityType {
     CHARCOAL_EYES(3),
     CARROT_NOSE(3),
     TOP_HAT(3),
-    DISPLAY_HANDS(0);
+    DISPLAY_HANDS(0),
+    DISPLAY_EYES(0),
+    DISPLAY_NOSE(0),
+    DISPLAY_HAT(0);
 
     public static EntityType[] array = EntityType.values();
     public short groupIdx;
