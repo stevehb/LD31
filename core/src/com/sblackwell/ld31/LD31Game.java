@@ -59,6 +59,11 @@ public class LD31Game extends ApplicationAdapter {
     private final float TOP_RADIUS = 2.5f;
     private final float BOTTOM_RADIUS = 5.0f;
 
+    private final float BOTTOM_START_Y = WORLD_HEIGHT - 10f - BOTTOM_RADIUS;
+    private final float TOP_START_Y = WORLD_HEIGHT - 10f - TOP_RADIUS;
+
+    private final int FALLING_ITEM_COUNT = 10;
+
     private final String TITLE = "Snowman Ski Jump";
     private final String INSTRUCTIONS_1 = "left & right to position";
     private final String INSTRUCTIONS_2 = "down to drop";
@@ -82,6 +87,17 @@ public class LD31Game extends ApplicationAdapter {
                     "void main() {\n" +
                     "   gl_FragColor = v_col;\n" +
                     "}";
+
+    private final float SCORE_PLATFORM_PLACEMENT_MAX = 100f;
+    private final float SCORE_CONNECTION_ANGLE_MAX = 150f;
+    private final float SCORE_TOP_CONNECTED_MAX = 250f;
+    private final float SCORE_STICK_HANDS_MAX = 100f;
+    private final float SCORE_CHARCOAL_EYES_MAX = 100f;
+    private final float SCORE_CARROT_NOSE_MAX = 100f;
+    private final float SCORE_TOP_HAT_MAX = 200f;
+    private final float SCORE_TOTAL_MAX =
+            SCORE_PLATFORM_PLACEMENT_MAX + SCORE_CONNECTION_ANGLE_MAX + SCORE_TOP_CONNECTED_MAX +
+            SCORE_STICK_HANDS_MAX + SCORE_CHARCOAL_EYES_MAX + SCORE_CARROT_NOSE_MAX + SCORE_TOP_HAT_MAX;
 
     private class ScoreKeep {
         public float placementOnPlatform;
@@ -115,7 +131,7 @@ public class LD31Game extends ApplicationAdapter {
     private ShapeRenderer shapeRenderer;
     private Box2DDebugRenderer physRenderer;
 
-    private FloatArray vertices;
+    private FloatArray vertices1, vertices2;
 
     private World world;
     private Array<Body> worldBodies;
@@ -143,10 +159,13 @@ public class LD31Game extends ApplicationAdapter {
         ShaderProgram shaderProgram = new ShaderProgram(VERT_SHADER, FRAG_SHADER);
         imr.setShader(shaderProgram);
 
-        vertices = new FloatArray();
+        vertices1 = new FloatArray();
+        vertices2 = new FloatArray();
+
         physRenderer = new Box2DDebugRenderer(true, false, true, true, true, true);
         world = new World(new Vector2(0f, -100f), true);
         world.setContactListener(ContactSingleton.get());
+        world.setContactFilter(ContactSingleton.get());
         worldBodies = new Array<Body>();
         namedBodies = new ObjectMap<EntityType, Body>();
         fontDrawables = new Array<FontDrawable>(false, 32, FontDrawable.class);
@@ -190,13 +209,30 @@ public class LD31Game extends ApplicationAdapter {
             }
         }
 
+        // remake fallen items
+        {
+            world.getBodies(worldBodies);
+            for(int i = 0; i < worldBodies.size; i++) {
+                Body b = worldBodies.get(i);
+                Vector2 pos = b.getPosition();
+                BodyData d = (BodyData) b.getUserData();
+                boolean offScreen = pos.x < 0f || pos.y < 0f || pos.x > WORLD_WIDTH;
+                boolean isItem = d.type == EntityType.STICK_HANDS || d.type == EntityType.CHARCOAL_EYES || d.type == EntityType.CARROT_NOSE || d.type == EntityType.TOP_HAT;
+                if(isItem && offScreen) {
+                    Pools.free(d);
+                    world.destroyBody(b);
+                    int randIdx = MathUtils.random(5, 8);
+                    EntityType type = EntityType.array[randIdx];
+                    b = createItem(world, type);
+                    worldBodies.set(i, b);
+                }
+            }
+        }
+
 
         // update world & state
         switch(state) {
         case INTRO: {
-            // TODO: return this to the conditional
-            state = GameState.INTRO_2_PLAY;
-
             if(InputSingleton.keysPressed > 0) { state = GameState.INTRO_2_PLAY; }
             break;
         }
@@ -216,19 +252,18 @@ public class LD31Game extends ApplicationAdapter {
             scoreKeep.hasTopHat = false;
             scoreKeep.total = 0f;
 
-
             // create ski slope
             {
-                vertices.clear();
+                vertices1.clear();
                 final float xCenter = 25f;
                 for(float x = 0f; x <= 37f; x += 1f) {
                     float y = 0.085f *((x - xCenter) * (x - xCenter)) + 5f;
-                    vertices.add(x);
-                    vertices.add(y);
+                    vertices1.add(x);
+                    vertices1.add(y);
                 }
-                vertices.shrink();
+                vertices1.shrink();
                 BodyDef bd = createBodyDef(BodyDef.BodyType.StaticBody, 0f, 0f, 0f, 0f);
-                FixtureDef fd = createFixtureDef(Shape.Type.Chain, vertices, 0f, 0f, 0f);
+                FixtureDef fd = createFixtureDef(Shape.Type.Chain, vertices1, 0f, 0f, 0f, EntityType.SLOPE.groupIdx);
                 Body b = createBody(world, bd, fd);
                 BodyData data = Pools.obtain(BodyData.class);
                 data.outlineColor.set(Color.RED);
@@ -239,11 +274,11 @@ public class LD31Game extends ApplicationAdapter {
 
             // create platform
             {
-                vertices.clear();
-                vertices.addAll(PLATFORM_MIN_X - 5f, 0f, PLATFORM_MIN_X, 10f, PLATFORM_MAX_X, 10f, PLATFORM_MAX_X + 5f, 0f);
-                vertices.shrink();
+                vertices1.clear();
+                vertices1.addAll(PLATFORM_MIN_X - 5f, 0f, PLATFORM_MIN_X, 10f, PLATFORM_MAX_X, 10f, PLATFORM_MAX_X + 5f, 0f);
+                vertices1.shrink();
                 BodyDef bd = createBodyDef(BodyDef.BodyType.StaticBody, 0f, 0f, 0f, 0f);
-                FixtureDef fd = createFixtureDef(Shape.Type.Chain, vertices, 0f, 0f, 0f);
+                FixtureDef fd = createFixtureDef(Shape.Type.Chain, vertices1, 0f, 0f, 0f, EntityType.PLATFORM.groupIdx);
                 Body b = createBody(world, bd, fd);
                 BodyData data = Pools.obtain(BodyData.class);
                 data.outlineColor.set(Color.RED);
@@ -254,15 +289,15 @@ public class LD31Game extends ApplicationAdapter {
 
             // create dropper
             {
-                vertices.clear();
-                vertices.addAll(0f, 0f, 0f, -5f);
-                vertices.shrink();
-                FixtureDef fd2 = createFixtureDef(Shape.Type.Chain, vertices, 0f, 0f, 0f);
+                vertices1.clear();
+                vertices1.addAll(0f, 0f, 0f, -5f);
+                vertices1.shrink();
+                FixtureDef fd2 = createFixtureDef(Shape.Type.Chain, vertices1, 0f, 0f, 0f, EntityType.DROPPER.groupIdx);
 
-                vertices.clear();
-                vertices.addAll(-3f, -7f, 0f, -5f, 3f, -7f);
-                vertices.shrink();
-                FixtureDef fd1 = createFixtureDef(Shape.Type.Chain, vertices, 0f, 0f, 0f);
+                vertices1.clear();
+                vertices1.addAll(-3f, -7f, 0f, -5f, 3f, -7f);
+                vertices1.shrink();
+                FixtureDef fd1 = createFixtureDef(Shape.Type.Chain, vertices1, 0f, 0f, 0f, EntityType.DROPPER.groupIdx);
 
                 BodyDef bd = createBodyDef(BodyDef.BodyType.KinematicBody, (DROPPER_MAX_X - DROPPER_MIN_X) / 2f, WORLD_HEIGHT, 10f, 0f);
                 Body b = createBody(world, bd, fd1);
@@ -278,12 +313,13 @@ public class LD31Game extends ApplicationAdapter {
             // create bottom snowball
             {
                 Body dropper = namedBodies.get(EntityType.DROPPER);
-                vertices.clear();
-                vertices.add(BOTTOM_RADIUS);
-                vertices.shrink();
-                BodyDef bd = createBodyDef(BodyDef.BodyType.DynamicBody, dropper.getPosition().x, WORLD_HEIGHT - 10f - BOTTOM_RADIUS, 0.13f, 0f);
+                vertices1.clear();
+                vertices1.add(BOTTOM_RADIUS);
+                vertices1.shrink();
+                BodyDef bd = createBodyDef(BodyDef.BodyType.DynamicBody, dropper.getPosition().x, BOTTOM_START_Y, 0.13f, 0f);
                 bd.gravityScale = 0f;
-                FixtureDef fd = createFixtureDef(Shape.Type.Circle, vertices, 1f, 0f, 0f);
+                FixtureDef fd = createFixtureDef(Shape.Type.Circle, vertices1, 1f, 0f, 0f, EntityType.BOTTOM_BALL.groupIdx);
+
                 Body b = createBody(world, bd, fd);
                 BodyData data = Pools.obtain(BodyData.class);
                 data.fillColor.set(0.8f, 0.8f, 0.8f, 1f);
@@ -295,12 +331,12 @@ public class LD31Game extends ApplicationAdapter {
 
             // create top snowball
             {
-                vertices.clear();
-                vertices.add(TOP_RADIUS);
-                vertices.shrink();
+                vertices1.clear();
+                vertices1.add(TOP_RADIUS);
+                vertices1.shrink();
                 BodyDef bd = createBodyDef(BodyDef.BodyType.DynamicBody, 0f, -2f * TOP_RADIUS, 0f, 0f);
                 bd.gravityScale = 0f;
-                FixtureDef fd = createFixtureDef(Shape.Type.Circle, vertices, 1f, 0f, 0f);
+                FixtureDef fd = createFixtureDef(Shape.Type.Circle, vertices1, 1f, 0f, 0f, EntityType.TOP_BALL.groupIdx);
                 Body b = createBody(world, bd, fd);
                 BodyData data = Pools.obtain(BodyData.class);
                 data.fillColor.set(0.8f, 0.8f, 0.8f, 1f);
@@ -308,6 +344,16 @@ public class LD31Game extends ApplicationAdapter {
                 data.type = EntityType.TOP_BALL;
                 b.setUserData(data);
                 namedBodies.put(EntityType.TOP_BALL, b);
+            }
+
+            // create floating accessories
+            {
+                for(int i = 0; i < FALLING_ITEM_COUNT; i++) {
+                    int randIdx = MathUtils.random(5, 8);
+                    EntityType type = EntityType.array[randIdx];
+                    Body item = createItem(world, type);
+                    item.setTransform(item.getPosition().x, MathUtils.random(0f, WORLD_HEIGHT), item.getAngle());
+                }
             }
 
             state = GameState.PLAY_BOTTOM_HELD;
@@ -322,8 +368,7 @@ public class LD31Game extends ApplicationAdapter {
             A.NN(ball, "ball != null");
 
             // move ball with dropper
-            Vector2 ballPos = ball.getPosition();
-            ball.setTransform(dropperPos.x, ballPos.y, ball.getAngle());
+            ball.setTransform(dropperPos.x, BOTTOM_START_Y, ball.getAngle());
 
             // release ball if down pressed
             if(Gdx.input.isKeyJustPressed(Input.Keys.DOWN)) {
@@ -341,26 +386,53 @@ public class LD31Game extends ApplicationAdapter {
             Array<ContactEvent> q = ContactSingleton.get().queue;
             for(int i = 0; i < q.size; i++) {
                 ContactEvent e = q.get(i);
-                Body platform = getBodyOfType(e, EntityType.PLATFORM);
-                if(platform != null) {
+
+                // check for contact with falling item
+                {
                     Body ball = getBodyOfType(e, EntityType.BOTTOM_BALL);
-                    float ballX = ball.getPosition().x;
-                    L.l("ball landed at " + ballX);
-                    ballX = MathUtils.round(ballX);
-                    if(ballX >= PLATFORM_MIN_X && ballX <= PLATFORM_MAX_X) {
-                        ball.setLinearVelocity(0f, 0f);
-                        ball.setGravityScale(0f);
-                        ball.setType(BodyDef.BodyType.StaticBody);
-                        scoreKeep.placementOnPlatform = calcPercentFromCenter(ballX, PLATFORM_MIN_X, PLATFORM_MAX_X);
-                       L.l("placementOnPlatform=" + scoreKeep.placementOnPlatform);
-                    } else {
-                        scoreKeep.placementOnPlatform = 0f;
+                    Body stick = getBodyOfType(e, EntityType.STICK_HANDS);
+                    if(ball != null && stick != null) {
+                        BodyData otherData = (BodyData) stick.getUserData();
+                        switch(otherData.type) {
+                        case STICK_HANDS:
+                            scoreKeep.hasStickHands = true;
+                            break;
+                        }
+                        Pools.free(otherData);
+                        world.destroyBody(stick);
                     }
-                    state = GameState.PLAY_BOTTOM_2_TOP;
-                    break;
+                }
+
+                // check for contact with platform
+                {
+                    Body platform = getBodyOfType(e, EntityType.PLATFORM);
+                    if(platform != null) {
+                        Body ball = getBodyOfType(e, EntityType.BOTTOM_BALL);
+                        float ballX = ball.getPosition().x;
+                        L.l("ball landed at " + ballX);
+                        ballX = MathUtils.round(ballX);
+                        if(ballX >= PLATFORM_MIN_X && ballX <= PLATFORM_MAX_X) {
+                            ball.setLinearVelocity(0f, 0f);
+                            ball.setGravityScale(0f);
+                            ball.setType(BodyDef.BodyType.StaticBody);
+                            scoreKeep.placementOnPlatform = calcPercentFromCenter(ballX, PLATFORM_MIN_X, PLATFORM_MAX_X);
+                            L.l("placementOnPlatform=" + scoreKeep.placementOnPlatform);
+                        } else {
+                            scoreKeep.placementOnPlatform = 0f;
+                        }
+                        state = GameState.PLAY_BOTTOM_2_TOP;
+                        break;
+                    }
                 }
             }
             clearPoolArray(q);
+
+            // detect if ball falls over side or is inactive
+            Body ball = namedBodies.get(EntityType.BOTTOM_BALL);
+            if(ball.getPosition().y < 0 || (ball.getPosition().x < PLATFORM_MIN_X && ball.getLinearVelocity().isZero(0.1f))) {
+                state = GameState.PLAY_BOTTOM_2_TOP;
+            }
+
             break;
         }
 
@@ -370,7 +442,7 @@ public class LD31Game extends ApplicationAdapter {
             A.NN(dropper, "dropper != null");
             Body ball = namedBodies.get(EntityType.TOP_BALL);
             A.NN(ball, "ball != null");
-            ball.setTransform(dropper.getPosition().x, WORLD_HEIGHT - 10f - TOP_RADIUS, ball.getAngle());
+            ball.setTransform(dropper.getPosition().x, TOP_START_Y, ball.getAngle());
             state = GameState.PLAY_TOP_HELD;
             break;
         }
@@ -383,8 +455,7 @@ public class LD31Game extends ApplicationAdapter {
             A.NN(ball, "ball != null");
 
             // move ball with dropper
-            Vector2 ballPos = ball.getPosition();
-            ball.setTransform(dropperPos.x, ballPos.y, ball.getAngle());
+            ball.setTransform(dropperPos.x, TOP_START_Y, ball.getAngle());
 
             // release ball if down pressed
             if(Gdx.input.isKeyJustPressed(Input.Keys.DOWN)) {
@@ -402,61 +473,125 @@ public class LD31Game extends ApplicationAdapter {
             Array<ContactEvent> q = ContactSingleton.get().queue;
             for(int i = 0; i < q.size; i++) {
                 ContactEvent e = q.get(i);
-                Body btmBall = getBodyOfType(e, EntityType.BOTTOM_BALL);
-                Body platform = getBodyOfType(e, EntityType.PLATFORM);
 
-                if(btmBall != null || platform != null) {
+                // check for contact with falling item
+                {
+                    Body ball = getBodyOfType(e, EntityType.TOP_BALL);
+                    Body charcoal = getBodyOfType(e, EntityType.CHARCOAL_EYES);
+                    Body carrot = getBodyOfType(e, EntityType.CARROT_NOSE);
+                    Body hat = getBodyOfType(e, EntityType.TOP_HAT);
+                    Body other = (charcoal != null) ? charcoal : (carrot != null) ? carrot : hat;
+                    if(ball != null && other != null) {
+                        BodyData otherData = (BodyData) other.getUserData();
+                        switch(otherData.type) {
+                        case CHARCOAL_EYES:
+                            scoreKeep.hasCharcoalEyes = true;
+                            break;
+                        case CARROT_NOSE:
+                            scoreKeep.hasCarrotNose = true;
+                            break;
+                        case TOP_HAT:
+                            scoreKeep.hasTopHat = true;
+                            break;
+                        }
+                        Pools.free(otherData);
+                        world.destroyBody(other);
+                    }
+                }
+
+                // check for contact with platform or bottom ball
+                {
+                    Body btmBall = getBodyOfType(e, EntityType.BOTTOM_BALL);
+                    Body platform = getBodyOfType(e, EntityType.PLATFORM);
                     Body topBall = getBodyOfType(e, EntityType.TOP_BALL);
-                    A.NN(topBall, "topBall != null");
-                    if(btmBall != null) {
-                        topBall.setLinearVelocity(0f, 0f);
-                        topBall.setGravityScale(0f);
-                        topBall.setType(BodyDef.BodyType.StaticBody);
-                        scoreKeep.topConnectedToBottom = true;
-                        float dX = Math.abs(btmBall.getPosition().x - topBall.getPosition().x);
-                        float dY = Math.abs(btmBall.getPosition().y - topBall.getPosition().y);
-                        float angle = MathUtils.atan2(dY, dX);
-                        scoreKeep.angleOfConnection = angle;
-                        L.l("top hit btm: angle=" + angle * MathUtils.radiansToDegrees);
-                    } else {
-                        float ballX = topBall.getPosition().x;
-                        L.l("topBall landed at " + ballX);
-                        ballX = MathUtils.round(ballX);
-                        if(ballX >= PLATFORM_MIN_X && ballX <= PLATFORM_MAX_X) {
+                    if(topBall != null && (btmBall != null || platform != null)) {
+                        if(btmBall != null) {
                             topBall.setLinearVelocity(0f, 0f);
                             topBall.setGravityScale(0f);
                             topBall.setType(BodyDef.BodyType.StaticBody);
-                            scoreKeep.topConnectedToBottom = false;
-                            scoreKeep.angleOfConnection = Float.NaN;
+                            scoreKeep.topConnectedToBottom = true;
+                            float dX = Math.abs(btmBall.getPosition().x - topBall.getPosition().x);
+                            float dY = Math.abs(btmBall.getPosition().y - topBall.getPosition().y);
+                            float angle = MathUtils.atan2(dY, dX);
+                            scoreKeep.angleOfConnection = angle;
+                            L.l("top hit btm: angle=" + angle * MathUtils.radiansToDegrees);
+                        } else {
+                            float ballX = topBall.getPosition().x;
+                            L.l("topBall landed at " + ballX);
+                            ballX = MathUtils.round(ballX);
+                            if(ballX >= PLATFORM_MIN_X && ballX <= PLATFORM_MAX_X) {
+                                topBall.setLinearVelocity(0f, 0f);
+                                topBall.setGravityScale(0f);
+                                topBall.setType(BodyDef.BodyType.StaticBody);
+                                scoreKeep.topConnectedToBottom = false;
+                                scoreKeep.angleOfConnection = Float.NaN;
+                            }
                         }
+                        state = GameState.PLAY_2_OUTRO;
+                        break;
                     }
-                    state = GameState.PLAY_2_OUTRO;
-                    break;
                 }
             }
             clearPoolArray(q);
+
+            // detect if ball falls over side or is inactive
+            Body ball = namedBodies.get(EntityType.TOP_BALL);
+            if(ball.getPosition().y < 0 || (ball.getPosition().x < PLATFORM_MIN_X && ball.getLinearVelocity().isZero(0.1f))) {
+                state = GameState.PLAY_2_OUTRO;
+            }
+
             break;
         }
 
         case PLAY_2_OUTRO: {
             L.l("state=" + state);
-            scoreKeep.total = 0f;
-            scoreKeep.total += 100f * scoreKeep.placementOnPlatform;
-            scoreKeep.total += 150f * calcPercentFromCenter(scoreKeep.angleOfConnection, 0, MathUtils.PI);
-            scoreKeep.total += 250f * ((scoreKeep.topConnectedToBottom) ? 1f : 0f);
-            scoreKeep.total += 100f * ((scoreKeep.hasStickHands) ? 1f : 0f);
-            scoreKeep.total += 100f * ((scoreKeep.hasCharcoalEyes) ? 1f : 0f);
-            scoreKeep.total += 100f * ((scoreKeep.hasCarrotNose) ? 1f : 0f);
-            scoreKeep.total += 200f * ((scoreKeep.hasTopHat) ? 1f : 0f);
 
-            L.l("total score: " + scoreKeep);
+            // calc scores
+            float platformPlacement = SCORE_PLATFORM_PLACEMENT_MAX * scoreKeep.placementOnPlatform;
+            float snowballConnected = SCORE_TOP_CONNECTED_MAX * ((scoreKeep.topConnectedToBottom) ? 1f : 0f);
+            float snowballAngle = scoreKeep.topConnectedToBottom ? SCORE_CONNECTION_ANGLE_MAX * calcPercentFromCenter(scoreKeep.angleOfConnection, 0, MathUtils.PI) : 0f;
+            float stickHands = SCORE_STICK_HANDS_MAX * ((scoreKeep.hasStickHands) ? 1f : 0f);
+            float charcoalEyes = SCORE_CHARCOAL_EYES_MAX * ((scoreKeep.hasCharcoalEyes) ? 1f : 0f);
+            float carrotNose = SCORE_CARROT_NOSE_MAX * ((scoreKeep.hasCarrotNose) ? 1f : 0f);
+            float hat = SCORE_TOP_HAT_MAX * ((scoreKeep.hasTopHat) ? 1f : 0f);
+            scoreKeep.total = platformPlacement + snowballConnected + snowballAngle + stickHands + charcoalEyes + carrotNose + hat;
+
+            // set up score diaplays
+            String str = "Platform Placement: " + MathUtils.round(platformPlacement) + " / " + (int)SCORE_PLATFORM_PLACEMENT_MAX;
+            FontDrawable fd1 = createFontDrawable(font, str, 0.75f, Color.RED, 0.5f, 7f/8f);
+            fontDrawables.add(fd1);
+            str = "Snowballs Connected: " + MathUtils.round(snowballConnected) + " / " + (int)SCORE_TOP_CONNECTED_MAX;
+            FontDrawable fd2 = createFontDrawable(font, str, 0.75f, Color.RED, fd1.pos.x, 6.6f / 8f);
+            fontDrawables.add(fd2);
+            str = "Snowball Angle: " + MathUtils.round(snowballAngle) + " / " + (int)SCORE_CONNECTION_ANGLE_MAX;
+            FontDrawable fd3 = createFontDrawable(font, str, 0.75f, Color.RED, fd1.pos.x, 6.2f / 8f);
+            fontDrawables.add(fd3);
+            str = "Stick Hands: " + MathUtils.round(stickHands) + " / " + (int)SCORE_STICK_HANDS_MAX;
+            FontDrawable fd4 = createFontDrawable(font, str, 0.75f, Color.RED, fd1.pos.x, 5.8f / 8f);
+            fontDrawables.add(fd4);
+            str = "Charcoal Eyes: " + MathUtils.round(charcoalEyes) + " / " + (int)SCORE_CHARCOAL_EYES_MAX;
+            FontDrawable fd5 = createFontDrawable(font, str, 0.75f, Color.RED, fd1.pos.x, 5.4f / 8f);
+            fontDrawables.add(fd5);
+            str = "Carrot Nose: " + MathUtils.round(carrotNose) + " / " + (int)SCORE_CARROT_NOSE_MAX;
+            FontDrawable fd6 = createFontDrawable(font, str, 0.75f, Color.RED, fd1.pos.x, 5f / 8f);
+            fontDrawables.add(fd6);
+            str = "Top Hat: " + MathUtils.round(hat) + " / " + (int)SCORE_TOP_HAT_MAX;
+            FontDrawable fd7 = createFontDrawable(font, str, 0.75f, Color.RED, fd1.pos.x, 4.6f / 8f);
+            fontDrawables.add(fd7);
+            str = "Total: " + MathUtils.round(scoreKeep.total) + " / " + (int)SCORE_TOTAL_MAX;
+            FontDrawable fd8 = createFontDrawable(font, str, 1f, Color.RED, 0.5f, 4f / 8f);
+            fontDrawables.add(fd8);
+            FontDrawable restart = createFontDrawable(font, "Press R to Restart", 1f, Color.YELLOW, 0.5f, 3f / 8f);
+            fontDrawables.add(restart);
+
             state = GameState.OUTRO;
             break;
         }
 
         case OUTRO: {
-
-            // TODO: await key press to restart (go to INTRO_2_PLAY, not OUTRO_2_INTRO)
+            if(InputSingleton.keysPressed > 0 && !Gdx.input.isKeyPressed(Input.Keys.R)) {
+                state = GameState.OUTRO_2_INTRO;
+            }
             break;
         }
 
@@ -467,24 +602,24 @@ public class LD31Game extends ApplicationAdapter {
             clearWorld(world, worldBodies);
 
             // make title
-            FontDrawable title = createFontDrawable(TITLE, 1f, Color.RED, 0.5f, 5f / 6f);
+            FontDrawable title = createFontDrawable(font, TITLE, 1f, Color.RED, 0.5f, 5f / 6f);
             fontDrawables.add(title);
 
             // make instructions text
-            FontDrawable inst1 = createFontDrawable(INSTRUCTIONS_1, 0.75f, Color.RED, 0.5f, 1f / 4f);
+            FontDrawable inst1 = createFontDrawable(font, INSTRUCTIONS_1, 0.75f, Color.RED, 0.5f, 1f / 4f);
             fontDrawables.add(inst1);
-            FontDrawable inst2 = createFontDrawable(INSTRUCTIONS_2, 0.75f, Color.RED, 0.5f, 1f / 4f);
+            FontDrawable inst2 = createFontDrawable(font, INSTRUCTIONS_2, 0.75f, Color.RED, 0.5f, 1f / 4f);
             inst2.pos.y -= inst1.bounds.height * 1.5f;
             fontDrawables.add(inst2);
-            FontDrawable inst3 = createFontDrawable(INSTRUCTIONS_3, 0.75f, Color.RED, 0.5f, 1f / 4f);
+            FontDrawable inst3 = createFontDrawable(font, INSTRUCTIONS_3, 0.75f, Color.RED, 0.5f, 1f / 4f);
             inst3.pos.y -= inst1.bounds.height * 3f;
             fontDrawables.add(inst3);
 
             // test circle
-            vertices.clear();
-            vertices.add(20f);
+            vertices1.clear();
+            vertices1.add(20f);
             BodyDef circleBodyDef = createBodyDef(BodyDef.BodyType.StaticBody, 50f, 50f, 0, 0);
-            FixtureDef circleFixtureDef = createFixtureDef(Shape.Type.Circle, vertices, 0f, 0f, 0f);
+            FixtureDef circleFixtureDef = createFixtureDef(Shape.Type.Circle, vertices1, 0f, 0f, 0f, (short)0);
             Body circle = createBody(world, circleBodyDef, circleFixtureDef);
             BodyData circleData = Pools.obtain(BodyData.class);
             circleData.outlineColor.set(Color.RED);
@@ -494,7 +629,6 @@ public class LD31Game extends ApplicationAdapter {
             break;
         }
         }
-
 
         // start the draw
         Gdx.gl.glClearColor(0.07f, 0.09f, 0.11f, 1f);
@@ -530,7 +664,6 @@ public class LD31Game extends ApplicationAdapter {
         batch.end();
 
         //physRenderer.render(world, worldViewport.getCamera().combined);
-
     }
 
     @Override
@@ -559,16 +692,17 @@ public class LD31Game extends ApplicationAdapter {
         worldBodies.clear();
     }
 
-    private FontDrawable createFontDrawable(String text, float scale, Color tint, float posX, float posY) {
+    private FontDrawable createFontDrawable(BitmapFont font, String text, float scale, Color tint, float posX, float posY) {
         FontDrawable fd = Pools.obtain(FontDrawable.class);
         fd.text = text;
         fd.scale = scale;
+        font.setScale(scale);
         fd.bounds.set(font.getBounds(fd.text));
-        fd.bounds.width *= scale;
-        fd.bounds.height *= scale;
+        //fd.bounds.width *= scale;
+        //fd.bounds.height *= scale;
         fd.tint.set(tint);
-        fd.pos.x = (FONT_VIEWPORT_WIDTH - fd.bounds.width) * posX;
-        fd.pos.y = (FONT_VIEWPORT_HEIGHT - fd.bounds.height) * posY;
+        if(posX < 0f || posX > 1f) fd.pos.x = posX; else fd.pos.x = (FONT_VIEWPORT_WIDTH - fd.bounds.width) * posX;
+        if(posY < 0f || posY > 1f) fd.pos.y = posY; else fd.pos.y = (FONT_VIEWPORT_HEIGHT - fd.bounds.height) * posY;
         return fd;
     }
 
@@ -587,7 +721,7 @@ public class LD31Game extends ApplicationAdapter {
         return bodyDef;
     }
 
-    private FixtureDef createFixtureDef(Shape.Type type, FloatArray verts, float massDensity, float friction, float restitution) {
+    private FixtureDef createFixtureDef(Shape.Type type, FloatArray verts, float massDensity, float friction, float restitution, short groudIdx) {
         Shape shape = null;
         A.NN(verts, "verts != null");
         switch(type) {
@@ -617,7 +751,16 @@ public class LD31Game extends ApplicationAdapter {
             ChainShape cs = (ChainShape) shape;
             A.EVEN(verts.size, "verts.size is even");
             A.T(verts.size >= 4, "verts.size >= 4");
-            cs.createChain(verts.items);
+            float x1 = verts.get(0), y1 = verts.get(1);
+            float x2 = verts.get(verts.size - 2), y2 = verts.get(verts.size - 1);
+            if(MathUtils.isEqual(x1, x2, 0.1f) && MathUtils.isEqual(y1, y2, 0.1f)) {
+                verts.removeIndex(verts.size - 1);
+                verts.removeIndex(verts.size - 1);
+                verts.shrink();
+                cs.createLoop(verts.items);
+            } else {
+                cs.createChain(verts.items);
+            }
             break;
         }
         }
@@ -628,6 +771,7 @@ public class LD31Game extends ApplicationAdapter {
         fixtureDef.density = massDensity;
         fixtureDef.friction = friction;
         fixtureDef.restitution = restitution;
+        fixtureDef.filter.groupIndex = groudIdx;
 
         return fixtureDef;
     }
@@ -639,12 +783,76 @@ public class LD31Game extends ApplicationAdapter {
         return body;
     }
 
+    private Body createItem(World world, EntityType type) {
+        vertices1.clear();
+        vertices2.clear();
+        BodyData data = Pools.obtain(BodyData.class);
+        data.type = type;
+        Shape.Type shapeType = null;
+
+        switch(type) {
+        case STICK_HANDS: {
+            shapeType = Shape.Type.Chain;
+            vertices1.addAll(-2f, -2f, 0f, 0f, 0f, 2f, 0f, 0f, 2f, 2f, 0f, 0f, 2f, 0f);
+            data.outlineColor.set(Color.ORANGE);
+            break;
+        }
+        case CHARCOAL_EYES: {
+            shapeType = Shape.Type.Chain;
+            vertices1.addAll(0f, 0f, -1f,  1.5f, -2f, 0f, -1f, -1.5f, 0f, 0f);
+            vertices2.addAll(0f, 0f,  1f, -1.5f,  2f, 0f,  1f,  1.5f, 0f, 0f);
+            //data.fillColor.set(Color.GRAY);
+            data.outlineColor.set(Color.GRAY);
+            break;
+        }
+        case CARROT_NOSE: {
+            shapeType = Shape.Type.Polygon;
+            vertices1.addAll(-2.5f, -2.5f, 2.5f, 1f, 1f, 2.5f, -2.5f, -2.5f);
+            data.fillColor.set(Color.ORANGE);
+            data.outlineColor.set(Color.ORANGE);
+            break;
+        }
+        case TOP_HAT: {
+            shapeType = Shape.Type.Chain;
+            vertices1.addAll(-2.5f, -2.5f, 0f, 0f, 0f, 2.5f, 0f, 0f, 2.5f, 2.5f, 0f, 0f, 2.5f, 0f);
+            //data.fillColor.set();
+            data.outlineColor.set(Color.MAGENTA);
+            break;
+        }
+        case DISPLAY_HANDS: {
+
+            break;
+        }
+        default:
+            A.T(false, "item type=" + type);
+        }
+        vertices1.shrink();
+        vertices2.shrink();
+        A.NN(shapeType, "shapeType != null");
+        A.T(vertices1.size > 0, "vertices1.size > 0");
+
+        float xPos = MathUtils.random(0, WORLD_WIDTH);
+        float yPos = WORLD_HEIGHT + 5f;
+        BodyDef bd = createBodyDef(BodyDef.BodyType.DynamicBody, xPos, yPos, 0, 0f);
+        bd.gravityScale = 0.1f;
+        FixtureDef fd1 = createFixtureDef(shapeType, vertices1, 0f, 0f, 0f, type.groupIdx);
+        fd1.isSensor = true;
+        Body b = createBody(world, bd, fd1);
+        if(vertices2.size > 0) {
+            FixtureDef fd2 = createFixtureDef(shapeType, vertices1, 0f, 0f, 0f, type.groupIdx);
+            fd2.isSensor = true;
+            b.createFixture(fd2);
+            fd2.shape.dispose();
+        }
+        b.setUserData(data);
+        return b;
+    }
+
     private void drawBody(ShapeRenderer renderer, Body body) {
         Array<Fixture> fixtures = body.getFixtureList();
         Vector2 bodyPos = body.getPosition();
         BodyData bodyData = (BodyData) body.getUserData();
         switch(renderer.getCurrentType()) {
-        case Point:
         case Line:
             renderer.setColor(bodyData.outlineColor);
             break;
@@ -661,6 +869,8 @@ public class LD31Game extends ApplicationAdapter {
                 break;
             }
             case Edge: {
+                if(renderer.getCurrentType() == ShapeRenderer.ShapeType.Filled) break;
+
                 Vector2 v0 = Pools.obtain(Vector2.class).set(Vector2.Zero);
                 Vector2 v1 = Pools.obtain(Vector2.class).set(Vector2.Zero);
                 EdgeShape edge = (EdgeShape) f.getShape();
@@ -682,6 +892,8 @@ public class LD31Game extends ApplicationAdapter {
                 break;
             }
             case Polygon: {
+                if(renderer.getCurrentType() == ShapeRenderer.ShapeType.Filled) break;
+
                 Vector2 v0 = Pools.obtain(Vector2.class).set(Vector2.Zero);
                 Vector2 v1 = Pools.obtain(Vector2.class).set(Vector2.Zero);
                 PolygonShape poly = (PolygonShape) f.getShape();
@@ -695,6 +907,8 @@ public class LD31Game extends ApplicationAdapter {
                 break;
             }
             case Chain: {
+                if(renderer.getCurrentType() == ShapeRenderer.ShapeType.Filled) break;
+
                 Vector2 v0 = Pools.obtain(Vector2.class).set(Vector2.Zero);
                 Vector2 v1 = Pools.obtain(Vector2.class).set(Vector2.Zero);
                 ChainShape chain = (ChainShape) f.getShape();
@@ -713,9 +927,9 @@ public class LD31Game extends ApplicationAdapter {
 
     private Body getBodyOfType(ContactEvent event, EntityType type) {
         BodyData a = (BodyData) event.a.getUserData();
-        if(a.type == type) { return event.a; }
+        if(a != null && a.type == type) { return event.a; }
         BodyData b = (BodyData) event.b.getUserData();
-        if(b.type == type) { return event.b; }
+        if(b != null && b.type == type) { return event.b; }
         return null;
     }
 
